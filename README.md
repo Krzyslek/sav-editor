@@ -6,7 +6,7 @@ built around Shadow Dungeon's `slot_*.sav`, but it will open any save in that fo
 
 Everything runs client-side. No upload, no server, no build step.
 
-**Live version:** https://USERNAME.github.io/shadow-dungeon-sav-editor/
+**Live version:** https://USERNAME.github.io/sav-editor/  (replace `USERNAME` with your GitHub account)
 
 ---
 
@@ -147,12 +147,19 @@ Put a save at `.local/sample.sav` (git-ignored) and open `tests.html`.
 
 ## Publishing to GitHub Pages
 
-```bash
-git remote add origin https://github.com/USERNAME/shadow-dungeon-sav-editor.git
-git push -u origin main
-```
+1. Create an empty **public** repository named `sav-editor` at
+   <https://github.com/new> — no README, no .gitignore, no license (this repo already has them).
+2. Push:
 
-Then in **Settings → Pages**, set *Source* to `Deploy from a branch`, branch `main`, folder `/ (root)`.
+   ```bash
+   git remote add origin https://github.com/USERNAME/sav-editor.git
+   git push -u origin main
+   ```
+
+3. In **Settings → Pages**, set *Source* to `Deploy from a branch`, branch `main`, folder `/ (root)`.
+   The site goes live at `https://USERNAME.github.io/sav-editor/` in a minute or two.
+
+No build step and no Actions workflow is needed — Pages serves the files as they are.
 
 ---
 
