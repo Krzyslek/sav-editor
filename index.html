@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shadow Dungeon .sav editor</title>
+<meta name="description" content="Browse, search and edit Unity OdinSerializer .sav files (Shadow Dungeon) entirely in your browser.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#128737;</text></svg>">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand"><span class="mark">SD</span><span>.sav editor</span></div>
+
+  <div class="file-zone" id="dropzone">
+    <input type="file" id="file" accept=".sav,.dat,.bin,*" hidden>
+    <button class="btn primary" id="btnOpen">Open .sav</button>
+    <span class="hint">or drop a file here</span>
+  </div>
+
+  <div class="fileinfo" id="fileinfo" hidden>
+    <strong id="fname">-</strong>
+    <span id="fmeta" class="muted"></span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <button class="btn" id="btnUndo" disabled title="Ctrl+Z">Undo</button>
+  <button class="btn" id="btnRedo" disabled title="Ctrl+Y">Redo</button>
+  <button class="btn" id="btnVerify" disabled title="Re-encode and compare with the loaded file">Verify</button>
+  <button class="btn primary" id="btnSave" disabled>Download .sav</button>
+</header>
+
+<main class="layout">
+  <!-- ---------------- tree ---------------- -->
+  <section class="panel tree-panel">
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Search names and values..." autocomplete="off">
+      <label class="chk"><input type="checkbox" id="qNames" checked> names</label>
+      <label class="chk"><input type="checkbox" id="qValues" checked> values</label>
+      <label class="chk"><input type="checkbox" id="qTypes"> types</label>
+      <label class="chk"><input type="checkbox" id="qCase"> Aa</label>
+      <label class="chk"><input type="checkbox" id="qRegex"> .*</label>
+      <label class="chk"><input type="checkbox" id="qFilter"> filter tree</label>
+      <select id="goto" title="Jump to a section"><option value="">Go to...</option></select>
+      <button class="btn small" id="btnCollapse">Collapse</button>
+    </div>
+
+    <div class="results" id="results" hidden>
+      <div class="results-head">
+        <span id="resCount"></span>
+        <button class="btn small" id="btnResClose">close</button>
+      </div>
+      <div class="results-list" id="resList"></div>
+    </div>
+
+    <div class="tree-host" id="tree">
+      <div class="empty" id="empty">
+        <h2>Open a save file to begin</h2>
+        <p>Everything happens locally in your browser - the file is never uploaded anywhere.</p>
+        <p class="muted">Supported: Unity <code>OdinSerializer</code> binary saves (Shadow Dungeon <code>slot_*.sav</code>).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------------- sidebar ---------------- -->
+  <aside class="panel side">
+    <nav class="tabs">
+      <button class="tab active" data-tab="details">Details</button>
+      <button class="tab" data-tab="items">Items</button>
+      <button class="tab" data-tab="about">About</button>
+    </nav>
+
+    <div class="tabpage" id="tab-details">
+      <div id="detEmpty" class="muted pad">Select a node in the tree.</div>
+      <div id="det" hidden>
+        <div class="det-path" id="detPath"></div>
+        <div id="detItemCard"></div>
+        <table class="det-table">
+          <tr><th>Field</th><td><input id="detName" class="in"></td></tr>
+          <tr><th>Entry</th><td id="detMarker" class="mono"></td></tr>
+          <tr id="detTypeRow"><th>C# type</th><td id="detType" class="mono small"></td></tr>
+          <tr id="detValRow"><th>Value</th><td id="detValCell"></td></tr>
+        </table>
+
+        <div class="det-actions">
+          <button class="btn small" id="actDup">Duplicate</button>
+          <button class="btn small" id="actUp">Move up</button>
+          <button class="btn small" id="actDown">Move down</button>
+          <button class="btn small danger" id="actDel">Delete</button>
+        </div>
+
+        <details class="addbox" id="addBox">
+          <summary>Add a child entry</summary>
+          <div class="addgrid">
+            <label>Name <input id="addName" class="in" value="NewField"></label>
+            <label>Type <select id="addType" class="in"></select></label>
+            <label>Value <input id="addValue" class="in" value="0"></label>
+            <label>C# type <input id="addCsType" class="in" placeholder="Namespace.Type, Assembly-CSharp"></label>
+            <button class="btn small primary" id="actAdd">Add</button>
+            <button class="btn small" id="actDupLast">Clone last element</button>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div class="tabpage" id="tab-items" hidden>
+      <div class="items-head">
+        <div class="row-line">
+          <label class="grow">Insert into
+            <select id="target" class="in"></select>
+          </label>
+        </div>
+        <div class="row-line">
+          <input type="search" id="itemQ" class="in grow" placeholder="Search items by name, id, type...">
+        </div>
+        <div class="row-line filters">
+          <select id="fKind" class="in">
+            <option value="all">All kinds</option>
+            <option value="weapon">Equipment</option>
+            <option value="gem">Gems / runes</option>
+            <option value="use">Consumables</option>
+          </select>
+          <select id="fSlot" class="in"><option value="all">All slots</option></select>
+          <select id="fQuality" class="in"><option value="all">All qualities</option></select>
+          <select id="fSort" class="in">
+            <option value="name">Name</option>
+            <option value="quality">Quality</option>
+            <option value="level">Level</option>
+            <option value="price">Price</option>
+          </select>
+        </div>
+        <div class="row-line small muted">
+          <span id="itemCount"></span>
+          <span class="grow"></span>
+          <label>qty <input type="number" id="itemQty" class="in qty" value="1" min="1" max="999"></label>
+        </div>
+      </div>
+      <div class="item-grid" id="itemGrid"></div>
+    </div>
+
+    <div class="tabpage pad" id="tab-about" hidden>
+      <h3>What this is</h3>
+      <p>A fully client-side editor for Unity saves written with <code>OdinSerializer</code>'s
+         binary format, built around Shadow Dungeon's <code>slot_*.sav</code>.</p>
+      <h3>How it works</h3>
+      <ul>
+        <li>The file is parsed into its real node tree - every entry keeps its original C# type.</li>
+        <li>Re-encoding an untouched file reproduces the original bytes exactly, so edits are the only difference.</li>
+        <li><b>Verify</b> re-encodes the current tree and reports the byte delta before you download.</li>
+      </ul>
+      <h3>Safety</h3>
+      <ul>
+        <li>Nothing leaves your machine - there is no server.</li>
+        <li>Keep a backup of your original save. Edited saves are not guaranteed to be accepted by every game build.</li>
+      </ul>
+      <h3>Item icons</h3>
+      <p>Icons are generated from each item's category and quality. To use the real sprites, drop them into
+         <code>assets/icons/</code> and list them in <code>assets/icons/index.json</code>.</p>
+      <p class="muted small" id="aboutVer"></p>
+    </div>
+  </aside>
+</main>
+
+<footer class="status">
+  <span id="status">Ready.</span>
+  <span class="spacer"></span>
+  <span id="stats" class="muted"></span>
+</footer>
+
+<div class="tip" id="tip" hidden></div>
+
+<script src="js/odin.js"></script>
+<script src="js/model.js"></script>
+<script src="js/tree.js"></script>
+<script src="js/items.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

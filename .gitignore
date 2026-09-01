@@ -1,0 +1,12 @@
+# personal save files used for local testing
+.local/
+*.sav
+
+# python
+__pycache__/
+*.pyc
+
+# editors / os
+.vscode/
+.DS_Store
+Thumbs.db

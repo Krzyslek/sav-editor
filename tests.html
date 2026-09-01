@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>odin.js self-test</title>
+<style>
+ body{font:13px/1.5 Consolas,monospace;background:#14161b;color:#dfe4ec;padding:18px}
+ .ok{color:#8fe08f}.fail{color:#ff8f8f}.info{color:#8b94a5}
+ h1{font-size:15px} li{margin:2px 0}
+</style>
+</head>
+<body>
+<h1>odin.js self-test <span id="sum" class="info">running...</span></h1>
+<ul id="log"></ul>
+<script src="js/odin.js"></script>
+<script src="js/model.js"></script>
+<script src="js/items.js"></script>
+<script>
+var pass=0, fail=0;
+function log(ok,msg,extra){
+  var li=document.createElement('li');
+  li.className = ok===null?'info':(ok?'ok':'fail');
+  li.textContent=(ok===null?'  - ':(ok?'PASS ':'FAIL '))+msg+(extra?'  ['+extra+']':'');
+  document.getElementById('log').appendChild(li);
+  if(ok===true)pass++; if(ok===false)fail++;
+}
+function cmp(a,b){
+  if(a.length!==b.length) return {same:false,why:'length '+a.length+' vs '+b.length};
+  for(var i=0;i<a.length;i++) if(a[i]!==b[i]) return {same:false,why:'first diff at 0x'+i.toString(16)};
+  return {same:true};
+}
+(async function(){
+  try{
+    var t0=performance.now();
+    var buf=await (await fetch('.local/sample.sav')).arrayBuffer();
+    log(null,'sample: '+buf.byteLength.toLocaleString()+' bytes');
+
+    var doc=Odin.parse(buf);
+    var tParse=Math.round(performance.now()-t0);
+    log(doc.read===doc.bytes,'parsed whole stream',doc.count.toLocaleString()+' entries, '+doc.types.size+' types, '+tParse+' ms');
+    log(doc.warnings.length===0,'no parse warnings',doc.warnings.join('; '));
+
+    var t1=performance.now();
+    var out=Odin.serialize(doc.root);
+    var tSer=Math.round(performance.now()-t1);
+    var c=cmp(out.data,new Uint8Array(buf));
+    log(c.same,'round-trip is byte-identical',c.why||(tSer+' ms'));
+    log(out.dangling===0,'no dangling internal references',String(out.dangling));
+
+    // --- value edit -------------------------------------------------------
+    var gv=null;
+    (function walk(ns){for(var i=0;i<ns.length;i++){if(ns[i].name==='GameVersion')gv=ns[i];if(ns[i].c)walk(ns[i].c);}})(doc.root);
+    log(!!gv,'found GameVersion', gv?gv.v:'');
+    var old=gv.v; gv.v='9.9.9';
+    var edited=Odin.serialize(doc.root).data;
+    log(edited.length===out.data.length,'string edit of equal length keeps the size', edited.length+' vs '+out.data.length);
+    var re=Odin.parse(edited.buffer.slice(edited.byteOffset,edited.byteOffset+edited.length));
+    var gv2=null;(function walk(ns){for(var i=0;i<ns.length;i++){if(ns[i].name==='GameVersion')gv2=ns[i];if(ns[i].c)walk(ns[i].c);}})(re.root);
+    log(gv2 && gv2.v==='9.9.9','edited value survives a re-parse', gv2?gv2.v:'-');
+    gv.v=old;
+
+    // --- 64-bit values ----------------------------------------------------
+    var ticks=null;(function walk(ns){for(var i=0;i<ns.length;i++){if(ns[i].name==='SaveCreatedUtcTicks')ticks=ns[i];if(ns[i].c)walk(ns[i].c);}})(doc.root);
+    log(ticks && typeof ticks.v==='bigint','64-bit ticks kept as BigInt', ticks?String(ticks.v):'-');
+    log(ticks && ticks.v>9007199254740991n,'ticks exceed Number.MAX_SAFE_INTEGER (BigInt is required)');
+
+    // --- item containers --------------------------------------------------
+    var conts=Model.findItemContainers(doc.root);
+    log(conts.length>=2,'found item containers', conts.map(function(x){return x.name+':'+x.array.c.length;}).join(', '));
+
+    // --- catalogue + insertion -------------------------------------------
+    var cat=new Items.Catalog();
+    await cat.load('');
+    await cat.loadTemplates('');
+    log(cat.index.items.length>0,'catalogue loaded', cat.index.items.length+' items');
+
+    var target=conts[0], before=target.array.c.length;
+    var it=cat.index.items.filter(function(i){return i.kind==='weapon';})[0];
+    var info=Model.gridInfo(target.array), cell=Model.freeCell(info,0);
+    var node=Items.buildContainerItem(cat,it,{page:cell.page,x:cell.x,y:cell.y,count:1});
+    target.array.c.push(node); node.p=target.array; Model.syncLen(target.array);
+    log(target.array.c.length===before+1,'item appended to '+target.name, it.name);
+
+    var withItem=Odin.serialize(doc.root);
+    log(withItem.data.length>out.data.length,'save grew after insertion','+'+(withItem.data.length-out.data.length)+' bytes');
+    log(withItem.dangling===0,'still no dangling references');
+
+    var doc2=Odin.parse(withItem.data.buffer.slice(withItem.data.byteOffset,withItem.data.byteOffset+withItem.data.length));
+    log(doc2.read===doc2.bytes,'re-parse of the edited save consumes the whole stream');
+    log(doc2.warnings.length===0,'re-parse has no warnings',doc2.warnings.join('; '));
+    var conts2=Model.findItemContainers(doc2.root);
+    log(conts2[0].array.c.length===before+1,'inserted item is present after re-parse',conts2[0].array.c.length+' items');
+
+    var inserted=conts2[0].array.c[before], f=Model.itemFields(inserted);
+    log(!!f.Page,'inserted wrapper has Page/GridX/GridY', f.Page? ('page '+f.Page.v+' '+f.GridX.v+':'+f.GridY.v):'-');
+    var payload=inserted.c.filter(function(x){return x.c;})[0];
+    var pf=payload?Model.itemFields(payload):{};
+    log(pf.GlobalID && pf.GlobalID.v===it.gid,'payload GlobalID matches the catalogue',pf.GlobalID?String(pf.GlobalID.v):'-');
+    log(pf.ItemName && pf.ItemName.v===it.name,'payload ItemName matches',pf.ItemName?pf.ItemName.v:'-');
+
+    // reference ids must stay unique and dense
+    var ids=[],dup=0,seen={};
+    (function walk(ns){for(var i=0;i<ns.length;i++){var n=ns[i];if(Odin.REFNODE[n.m]){if(seen[n.refId])dup++;seen[n.refId]=1;ids.push(n.refId);}if(n.c)walk(n.c);}})(doc2.root);
+    log(dup===0,'reference ids are unique after insertion',ids.length+' nodes, '+dup+' duplicates');
+
+    // --- deletion ---------------------------------------------------------
+    var d3=Odin.parse(buf);
+    var c3=Model.findItemContainers(d3.root)[0], n3=c3.array.c.length;
+    c3.array.c.splice(0,1); Model.syncLen(c3.array);
+    var del=Odin.serialize(d3.root);
+    var d4=Odin.parse(del.data.buffer.slice(del.data.byteOffset,del.data.byteOffset+del.data.length));
+    log(d4.warnings.length===0 && d4.read===d4.bytes,'save with a deleted item re-parses cleanly');
+    log(Model.findItemContainers(d4.root)[0].array.c.length===n3-1,'element count dropped by one');
+  }catch(e){
+    log(false,'exception: '+e.message);
+    console.error(e);
+  }
+  var s=document.getElementById('sum');
+  s.textContent=pass+' passed, '+fail+' failed';
+  s.className=fail?'fail':'ok';
+  document.title=(fail?'FAIL ':'OK ')+pass+'/'+(pass+fail);
+})();
+</script>
+</body>
+</html>
