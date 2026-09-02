@@ -70,6 +70,7 @@
 
     buildGoto(doc.root);
     buildTargets(doc.root);
+    updateCheatState();
     updateStats();
 
     var ms = Math.round(performance.now() - t0);
@@ -272,6 +273,18 @@
     if (keep2 !== '') $('chTarget').value = keep2;
   }
 
+  // Nothing here can run without a save, so say so instead of showing empty boxes.
+  function updateCheatState() {
+    var ready = !!state.doc;
+    ['chMaxStacks', 'chGiveAll', 'chGiveBest', 'chMaxProg', 'chProgReset'].forEach(function (id) {
+      if ($(id)) $(id).disabled = !ready;
+    });
+    if (!ready) {
+      $('chItemsNote').textContent = 'Open a save file to use these tools.';
+      $('progTable').textContent = '';
+    }
+  }
+
   // Default the cheat panel to the inventory, since that is what people mean.
   function syncCheatTargets() {
     var sel = $('chTarget');
@@ -304,6 +317,7 @@
       $('aboutVer').textContent = 'Catalogue: ' + j.items.length + ' items from ' + j.game + ' ' + j.gameVersion + '.';
       renderItems();
       if (state.doc) syncCheatTargets();
+      updateCheatState();
       return state.catalog.loadTemplates(base);
     }).catch(function (e) {
       $('itemGrid').innerHTML = '<div class="pad muted">Item catalogue unavailable: ' + esc(e.message) + '</div>';
@@ -681,7 +695,10 @@
       t.classList.add('active');
       ['details', 'items', 'cheats', 'about'].forEach(function (id) { $('tab-' + id).hidden = (id !== t.dataset.tab); });
       if ((t.dataset.tab === 'items' || t.dataset.tab === 'cheats') && !state.items.length) loadCatalog();
-      if (t.dataset.tab === 'cheats' && state.doc) { syncCheatTargets(); buildProgTable(); }
+      if (t.dataset.tab === 'cheats') {
+        updateCheatState();
+        if (state.doc) { syncCheatTargets(); buildProgTable(); }
+      }
     });
   });
 

@@ -6,6 +6,15 @@ and the project uses [semantic versioning](https://semver.org/).
 
 ---
 
+## [1.1.1] — 2026-09-02
+
+### Fixed
+
+* The *Cheats* tab no longer shows empty pickers before a save is opened: its buttons are
+  disabled and it says what to do instead.
+
+---
+
 ## [1.1.0] — 2026-09-02
 
 Bulk editing. Everything that previously took one click per item now has a button,

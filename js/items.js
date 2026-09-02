@@ -8,7 +8,7 @@
 
   // Bumped on release so browsers do not mix a new page with cached old data.
   // Keep in step with the ?v= stamps on the script tags in index.html.
-  var VERSION = '1.1.0';
+  var VERSION = '1.1.1';
 
   var QUALITY = {
     1: { n: 'Common',    c: '#9aa4b2' }, 2: { n: 'Common',    c: '#9aa4b2' },
