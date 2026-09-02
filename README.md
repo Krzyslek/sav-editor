@@ -6,6 +6,8 @@ built around Shadow Dungeon's `slot_*.sav`, but it will open any save in that fo
 
 Everything runs client-side. No upload, no server, no build step.
 
+Release notes live in [CHANGELOG.md](CHANGELOG.md).
+
 **Live version:** https://krzyslek.github.io/sav-editor/
 
 ---
@@ -135,6 +137,7 @@ Save it as `assets/icons/index.json`; listed ids then load their image instead o
 ```
 index.html                 the app
 tests.html                 in-browser test suite
+CHANGELOG.md               release notes
 css/app.css
 js/odin.js                 OdinSerializer binary reader / writer
 js/model.js                tree navigation, search, undoable edits
