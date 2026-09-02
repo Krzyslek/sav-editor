@@ -69,6 +69,7 @@
     <nav class="tabs">
       <button class="tab active" data-tab="details">Details</button>
       <button class="tab" data-tab="items">Items</button>
+      <button class="tab" data-tab="cheats">Cheats</button>
       <button class="tab" data-tab="about">About</button>
     </nav>
 
@@ -134,10 +135,50 @@
         <div class="row-line small muted">
           <span id="itemCount"></span>
           <span class="grow"></span>
+          <label title="Ignore the quantity box and insert a full stack"><input type="checkbox" id="itemMax" checked> max stack</label>
           <label>qty <input type="number" id="itemQty" class="in qty" value="1" min="1" max="999"></label>
         </div>
       </div>
       <div class="item-grid" id="itemGrid"></div>
+    </div>
+
+    <div class="tabpage" id="tab-cheats" hidden>
+      <div class="pad">
+        <p class="muted small">Bulk edits. Each button is a single undo step, and nothing is written
+           until you press <b>Download .sav</b> — press <b>Verify</b> first to see the size delta.</p>
+
+        <section class="cheat">
+          <h3>Items</h3>
+          <label class="stack">Container
+            <select id="chTarget" class="in"></select>
+          </label>
+          <label class="stack">Grid per page (columns x rows, detected from the save)
+            <span class="row-line">
+              <input type="number" id="chCols" class="in qty" min="1" max="64">
+              <span class="muted">x</span>
+              <input type="number" id="chRows" class="in qty" min="1" max="64">
+              <span id="chFree" class="muted small"></span>
+            </span>
+          </label>
+          <div class="cheat-btns">
+            <button class="btn" id="chMaxStacks">Max out every stack here</button>
+            <button class="btn" id="chGiveAll">Give every item, max stacks</button>
+            <button class="btn primary" id="chGiveBest">Give every item at best rolls, max stacks</button>
+          </div>
+          <p class="muted small" id="chItemsNote"></p>
+        </section>
+
+        <section class="cheat">
+          <h3>Progression</h3>
+          <table class="prog" id="progTable"></table>
+          <div class="cheat-btns">
+            <button class="btn primary" id="chMaxProg">Apply the checked values</button>
+            <button class="btn" id="chProgReset">Reset to detected values</button>
+          </div>
+          <p class="muted small">Talent points live in <code>TalentData.P_Base</code>; the game spends them
+             through <code>P_Used</code>, which is left untouched.</p>
+        </section>
+      </div>
     </div>
 
     <div class="tabpage pad" id="tab-about" hidden>
@@ -149,6 +190,8 @@
         <li>The file is parsed into its real node tree - every entry keeps its original C# type.</li>
         <li>Re-encoding an untouched file reproduces the original bytes exactly, so edits are the only difference.</li>
         <li><b>Verify</b> re-encodes the current tree and reports the byte delta before you download.</li>
+        <li>The <b>Cheats</b> tab applies the same edits in bulk — items it inserts are real structures
+            taken from a save, and "best rolls" only uses values the game itself produced.</li>
       </ul>
       <h3>Safety</h3>
       <ul>

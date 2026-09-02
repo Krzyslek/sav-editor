@@ -55,6 +55,7 @@
     state.original = new Uint8Array(buf);
     state.doc = doc;
     state.dirty = false;
+    state.cheatPicked = false;
     state.edits = new Mo.Edits(function () { markDirty(); render(); });
 
     $('empty').hidden = true;
@@ -249,21 +250,41 @@
 
   // ---------------------------------------------------------------- items
   function buildTargets(root) {
-    var sel = $('target');
-    sel.innerHTML = '';
-    var list = Mo.findItemContainers(root);
-    state.targets = list;
-    list.forEach(function (t, i) {
-      var o = document.createElement('option');
-      o.value = i;
-      o.textContent = t.name + ' (' + t.array.c.length + ' items)';
-      sel.appendChild(o);
+    state.targets = Mo.findItemContainers(root);
+    var keep = $('target').value, keep2 = $('chTarget').value;
+    [$('target'), $('chTarget')].forEach(function (sel) {
+      if (!sel) return;
+      sel.innerHTML = '';
+      state.targets.forEach(function (t, i) {
+        var o = document.createElement('option');
+        o.value = i;
+        o.textContent = t.name + ' (' + t.array.c.length + ' items)';
+        sel.appendChild(o);
+      });
+      if (!state.targets.length) {
+        var o2 = document.createElement('option');
+        o2.value = ''; o2.textContent = 'no item containers found';
+        sel.appendChild(o2);
+      }
     });
-    if (!list.length) {
-      var o2 = document.createElement('option');
-      o2.value = ''; o2.textContent = 'no item containers found';
-      sel.appendChild(o2);
+    if (keep !== '') $('target').value = keep;
+    else state.targets.forEach(function (t, i) { if (/Inventory/i.test(t.name)) $('target').value = i; });
+    if (keep2 !== '') $('chTarget').value = keep2;
+  }
+
+  // Default the cheat panel to the inventory, since that is what people mean.
+  function syncCheatTargets() {
+    var sel = $('chTarget');
+    if (!state.cheatPicked && state.targets.length) {
+      state.cheatPicked = true;
+      var pick = 0;
+      state.targets.forEach(function (t, i) { if (/Inventory/i.test(t.name)) pick = i; });
+      sel.value = pick;
     }
+    refreshCheatGrid(true);
+    $('chItemsNote').textContent = state.items.length
+      ? state.items.length + ' catalogue items - equipment does not stack, gems and consumables fill to their own cap.'
+      : 'Catalogue still loading...';
   }
 
   function loadCatalog() {
@@ -282,6 +303,7 @@
       });
       $('aboutVer').textContent = 'Catalogue: ' + j.items.length + ' items from ' + j.game + ' ' + j.gameVersion + '.';
       renderItems();
+      if (state.doc) syncCheatTargets();
       return state.catalog.loadTemplates(base);
     }).catch(function (e) {
       $('itemGrid').innerHTML = '<div class="pad muted">Item catalogue unavailable: ' + esc(e.message) + '</div>';
@@ -359,20 +381,176 @@
     var ti = $('target').value;
     if (ti === '') { status('No item container found in this save.', 'err'); return; }
     var target = state.targets[+ti];
-    var info = Mo.gridInfo(target.array);
-    var cell = Mo.freeCell(info, 0);
+    var packer = new Mo.Packer(target.array);
+    var size = it.size || [1, 1];
+    var cell = packer.place(size[0], size[1], 0) || { page: packer.maxPage + 1, x: 0, y: 0 };
     var qty = Math.max(1, Math.min(999, parseInt($('itemQty').value, 10) || 1));
     var node;
     try {
-      node = It.buildContainerItem(state.catalog, it, { page: cell.page, x: cell.x, y: cell.y, count: qty });
+      node = It.buildContainerItem(state.catalog, it, {
+        page: cell.page, x: cell.x, y: cell.y, count: qty, maxStack: $('itemMax').checked
+      });
     } catch (e) { status('Could not build the item: ' + e.message, 'err'); return; }
 
     state.edits.apply(Mo.insertNode(target.array, node, target.array.c.length));
     buildTargets(state.doc.root);
     $('target').value = ti;
     state.tree.reveal(node);
-    status('Inserted "' + it.name + '" into ' + target.name +
+    var num = It.fieldOf(Mo.payloadOf(node), 'Number');
+    status('Inserted "' + it.name + '"' + (num ? ' x' + num.v : '') + ' into ' + target.name +
            ' at page ' + cell.page + ', cell ' + cell.x + ':' + cell.y + '.', 'ok');
+  }
+
+  // ---------------------------------------------------------------- cheats
+  // Fields the "Progression" panel offers to raise, as section -> scalar field.
+  var PROG = [
+    { sec: 'TalentData', field: 'P_Base', label: 'Talent points', def: 999999, on: true },
+    { sec: 'InventoryData', field: 'Money', label: 'Money', def: 999999999, on: true },
+    { sec: 'PlayerData', field: 'Xp_Total', label: 'Experience (total)', def: 1e15, on: true },
+    { sec: 'PlayerData', field: 'DFXp_Total', label: 'Depth experience (total)', def: 1e15, on: true },
+    { sec: 'PlayerData', field: 'DFLevel', label: 'Depth level', def: 9999, on: false },
+    { sec: 'PlayerData', field: 'Level', label: 'Character level', def: 100, on: false }
+  ];
+
+  function findScalar(secName, fieldName) {
+    if (!state.doc) return null;
+    var top = state.doc.root[0] && state.doc.root[0].c;
+    if (!top) return null;
+    for (var i = 0; i < top.length; i++) {
+      if (top[i].name !== secName || !top[i].c) continue;
+      for (var j = 0; j < top[i].c.length; j++)
+        if (top[i].c[j].name === fieldName && !top[i].c[j].c) return top[i].c[j];
+    }
+    return null;
+  }
+
+  function plain(v) {
+    if (typeof v === 'bigint') return v.toString();
+    if (typeof v === 'number' && !Number.isInteger(v)) return String(Math.round(v));
+    return String(v);
+  }
+
+  function buildProgTable() {
+    var t = $('progTable');
+    t.textContent = '';
+    var head = document.createElement('tr');
+    head.innerHTML = '<th></th><th>Field</th><th style="text-align:right">Now</th><th>New value</th>';
+    t.appendChild(head);
+    PROG.forEach(function (row) {
+      var node = findScalar(row.sec, row.field);
+      var tr = document.createElement('tr');
+      if (!node) {
+        tr.className = 'off';
+        tr.innerHTML = '<td></td><td colspan="3" class="muted">' + esc(row.label) +
+          ' - not present in this save</td>';
+        t.appendChild(tr);
+        return;
+      }
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = row.on;
+      var inp = document.createElement('input'); inp.type = 'text'; inp.value = plain(row.def);
+      var td0 = document.createElement('td'), td1 = document.createElement('td'),
+          td2 = document.createElement('td'), td3 = document.createElement('td');
+      td0.appendChild(cb);
+      td1.textContent = row.label;
+      td2.className = 'cur'; td2.textContent = plain(node.v);
+      td3.appendChild(inp);
+      tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+      if (!row.on) tr.className = 'off';
+      cb.onchange = function () { tr.className = cb.checked ? '' : 'off'; };
+      tr._row = row; tr._node = node; tr._cb = cb; tr._inp = inp;
+      t.appendChild(tr);
+    });
+  }
+
+  function applyProgression() {
+    var ops = [], names = [], bad = null;
+    Array.prototype.forEach.call($('progTable').children, function (tr) {
+      if (!tr._node || !tr._cb.checked) return;
+      var v;
+      try { v = parseValue(tr._node, tr._inp.value); }
+      catch (e) { bad = tr._row.label + ': ' + e.message; return; }
+      if (tr._node.v !== v) { ops.push(Mo.setValue(tr._node, v)); names.push(tr._row.label); }
+    });
+    if (bad) { status(bad, 'err'); return; }
+    if (!ops.length) { status('Nothing to change - those values already match.'); return; }
+    state.edits.apply(Mo.batch('progression', ops));
+    buildProgTable();
+    status('Raised ' + names.join(', ') + '.', 'ok');
+  }
+
+  function cheatTarget() {
+    var i = $('chTarget').value;
+    return i === '' ? null : state.targets[+i];
+  }
+
+  function refreshCheatGrid(resetDims) {
+    var t = cheatTarget();
+    if (!t) { $('chFree').textContent = ''; return; }
+    var probe = new Mo.Packer(t.array);
+    if (resetDims || !$('chCols').value) {
+      $('chCols').value = probe.cols;
+      $('chRows').value = probe.rows;
+    }
+    var pc = Mo.pageCountOf(t.node);
+    $('chFree').textContent = t.array.c.length + ' items, ' + (probe.maxPage + 1) + ' pages used' +
+      (pc ? ' of ' + pc.v : '');
+  }
+
+  function packerFor(t) {
+    return new Mo.Packer(t.array, {
+      cols: Math.max(1, parseInt($('chCols').value, 10) || 0) || undefined,
+      rows: Math.max(1, parseInt($('chRows').value, 10) || 0) || undefined
+    });
+  }
+
+  // Sets every stack in the container to the maximum the item itself allows.
+  function maxOutStacks() {
+    var t = cheatTarget();
+    if (!t) { status('Pick a container first.', 'err'); return; }
+    var targets = It.stackTargets(t.array);
+    if (!targets.length) { status('Every stack in ' + t.name + ' is already full.'); return; }
+    var ops = targets.map(function (x) { return Mo.setValue(x.node, x.value); });
+    state.edits.apply(Mo.batch('max stacks', ops));
+    status('Filled ' + targets.length + ' stack(s) in ' + t.name + '.', 'ok');
+  }
+
+  // Inserts one of every catalogue item, packed by real grid footprint.
+  function giveEverything(useBest) {
+    var t = cheatTarget();
+    if (!t) { status('Pick a container first.', 'err'); return; }
+    if (!state.catalog.templates) { status('Item templates are still loading...'); return; }
+    var packer = packerFor(t), nodes = [], skipped = 0, bested = 0;
+    var elementTpl = state.catalog.templates.element;
+
+    for (var i = 0; i < state.items.length; i++) {
+      var item = state.items[i];
+      var size = item.size || [1, 1];
+      var cell = packer.place(size[0], size[1], 0);
+      if (!cell) { skipped++; continue; }
+      var best = useBest ? item.best : null;
+      var node;
+      try {
+        node = It.buildContainerItem(state.catalog, item, {
+          page: cell.page, x: cell.x, y: cell.y,
+          maxStack: true, best: best, elementTpl: elementTpl
+        });
+      } catch (e) { skipped++; continue; }
+      if (best) bested++;
+      nodes.push(node);
+    }
+    if (!nodes.length) { status('No free space in ' + t.name + '.', 'err'); return; }
+
+    var ops = [Mo.insertMany(t.array, nodes)];
+    var pc = Mo.pageCountOf(t.node);
+    if (pc && pc.v < packer.maxPage + 1) ops.push(Mo.setValue(pc, packer.maxPage + 1));
+
+    state.edits.apply(Mo.batch('give all items', ops));
+    buildTargets(state.doc.root);
+    refreshCheatGrid(false);
+    status('Added ' + nodes.length + ' items to ' + t.name +
+      (bested ? ' (' + bested + ' at best rolls)' : '') +
+      ' across pages 0-' + packer.maxPage +
+      (skipped ? '; ' + skipped + ' skipped for lack of space' : '') + '.', 'ok');
   }
 
   // ---------------------------------------------------------------- saving
@@ -480,12 +658,30 @@
     status('Cloned the last element.', 'ok');
   });
 
+  on('chTarget', 'change', function () { state.cheatPicked = true; refreshCheatGrid(true); });
+  on('chMaxStacks', 'click', maxOutStacks);
+  on('chGiveAll', 'click', function () { withBusy(function () { giveEverything(false); }); });
+  on('chGiveBest', 'click', function () { withBusy(function () { giveEverything(true); }); });
+  on('chMaxProg', 'click', applyProgression);
+  on('chProgReset', 'click', function () { buildProgTable(); status('Reset to the values in the save.'); });
+
+  // Long bulk edits: let the status line paint before the work blocks the thread.
+  function withBusy(fn) {
+    document.body.classList.add('busy');
+    status('Working...');
+    setTimeout(function () {
+      try { fn(); } catch (e) { console.error(e); status('Failed: ' + e.message, 'err'); }
+      document.body.classList.remove('busy');
+    }, 30);
+  }
+
   document.querySelectorAll('.tab').forEach(function (t) {
     t.addEventListener('click', function () {
       document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); });
       t.classList.add('active');
-      ['details', 'items', 'about'].forEach(function (id) { $('tab-' + id).hidden = (id !== t.dataset.tab); });
-      if (t.dataset.tab === 'items' && !state.items.length) loadCatalog();
+      ['details', 'items', 'cheats', 'about'].forEach(function (id) { $('tab-' + id).hidden = (id !== t.dataset.tab); });
+      if ((t.dataset.tab === 'items' || t.dataset.tab === 'cheats') && !state.items.length) loadCatalog();
+      if (t.dataset.tab === 'cheats' && state.doc) { syncCheatTargets(); buildProgTable(); }
     });
   });
 

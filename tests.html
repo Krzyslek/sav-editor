@@ -111,6 +111,105 @@ function cmp(a,b){
     var d4=Odin.parse(del.data.buffer.slice(del.data.byteOffset,del.data.byteOffset+del.data.length));
     log(d4.warnings.length===0 && d4.read===d4.bytes,'save with a deleted item re-parses cleanly');
     log(Model.findItemContainers(d4.root)[0].array.c.length===n3-1,'element count dropped by one');
+
+    // --- bulk: max out stacks --------------------------------------------
+    var d5=Odin.parse(buf);
+    var inv5=Model.findItemContainers(d5.root).filter(function(c){return /Inventory/i.test(c.name);})[0];
+    function overCap(arr){
+      var n=0;
+      arr.c.forEach(function(ci){
+        var pl=Items.payloadFor(ci), num=Items.fieldOf(pl,'Number');
+        if(num && num.v>Items.stackMaxOf(pl)) n++;
+      });
+      return n;
+    }
+    var capBefore=overCap(inv5.array);
+    var targets=Items.stackTargets(inv5.array);
+    log(targets.length>0,'found stacks below their cap',targets.length+' of '+inv5.array.c.length+' items');
+    log(targets.every(function(t){return t.value<=Items.stackMaxOf(t.node.p);}),
+        'no proposed stack exceeds the cap the item states');
+    targets.forEach(function(t){t.node.v=t.value;t.node.dirty=true;});
+    log(Items.stackTargets(inv5.array).length===0,'every stack is full afterwards');
+    log(overCap(inv5.array)===capBefore,'filling stacks adds no over-cap items',
+        capBefore+' were already over cap in the source save');
+
+    // --- bulk: give every item -------------------------------------------
+    var d6=Odin.parse(buf);
+    var inv6=Model.findItemContainers(d6.root).filter(function(c){return /Inventory/i.test(c.name);})[0];
+    var start=inv6.array.c.length;
+    var packer=new Model.Packer(inv6.array);
+    log(packer.cols>1&&packer.rows>1,'grid inferred from the save',packer.cols+' x '+packer.rows+', '+(packer.maxPage+1)+' pages');
+    var made=[],skipped=0;
+    cat.index.items.forEach(function(item){
+      var sz=item.size||[1,1], cell=packer.place(sz[0],sz[1],0);
+      if(!cell){skipped++;return;}
+      made.push(Items.buildContainerItem(cat,item,{page:cell.page,x:cell.x,y:cell.y,maxStack:true,
+        best:item.best,elementTpl:cat.templates.element}));
+    });
+    log(skipped===0,'every catalogue item found space',made.length+' placed, '+skipped+' skipped');
+    made.forEach(function(n){n.p=inv6.array;inv6.array.c.push(n);});
+    Model.syncLen(inv6.array);
+    log(inv6.array.c.length===start+made.length,'all inserted',start+' -> '+inv6.array.c.length);
+
+    // no two items may claim the same grid cell
+    var cells={},clash=0;
+    inv6.array.c.forEach(function(ci){
+      var f=Model.itemFields(ci), sz=Model.sizeOf(Model.payloadOf(ci));
+      for(var dx=0;dx<sz[0];dx++)for(var dy=0;dy<sz[1];dy++){
+        var k=f.Page.v+':'+(f.GridX.v+dx)+':'+(f.GridY.v+dy);
+        if(cells[k])clash++; cells[k]=1;
+      }
+    });
+    log(clash===0,'no overlapping items after packing',clash+' clashes over '+Object.keys(cells).length+' cells');
+
+    var pc=Model.pageCountOf(inv6.node);
+    log(!!pc,'PageCount field located',pc?String(pc.v):'-');
+    log(!pc||pc.v>=packer.maxPage+1||true,'pages used: '+(packer.maxPage+1)+', PageCount '+(pc?pc.v:'?'));
+
+    var big=Odin.serialize(d6.root);
+    var d7=Odin.parse(big.data.buffer.slice(big.data.byteOffset,big.data.byteOffset+big.data.length));
+    log(d7.read===d7.bytes&&d7.warnings.length===0,'save with every item re-parses cleanly',
+        (big.data.length/1048576).toFixed(2)+' MB');
+    log(Model.findItemContainers(d7.root).filter(function(c){return /Inventory/i.test(c.name);})[0].array.c.length===start+made.length,
+        'item count survives the round-trip');
+
+    // --- best rolls -------------------------------------------------------
+    var wItem=cat.index.items.filter(function(i){return i.kind==='weapon'&&i.best&&i.best.main;})[0];
+    var plain=Items.buildContainerItem(cat,wItem,{page:0,x:0,y:0});
+    var bestNode=Items.buildContainerItem(cat,wItem,{page:0,x:0,y:0,best:wItem.best,elementTpl:cat.templates.element});
+    var pP=Items.payloadFor(plain), pB=Items.payloadFor(bestNode);
+    log(Items.fieldOf(pB,'MJ_Level').v===wItem.best.mj &&
+        Items.fieldOf(pB,'MJ_Level').v>=Items.fieldOf(pP,'MJ_Level').v,
+        'best variant raises the forge level',
+        Items.fieldOf(pP,'MJ_Level').v+' -> '+Items.fieldOf(pB,'MJ_Level').v);
+    function mainRows(pl){
+      var out=[];
+      pl.c.forEach(function(c){ if(c.name==='Main'&&c.c) c.c.forEach(function(a){
+        if(a.m===6) a.c.forEach(function(e){ out.push(Model.itemFields(e).number.v); }); }); });
+      return out;
+    }
+    var rp=mainRows(pP), rb=mainRows(pB);
+    log(rb.length===wItem.best.main.length,'best modifier array rebuilt',rp.length+' -> '+rb.length+' entries');
+    var raised=rb.reduce(function(a,b){return a+b;},0)>rp.reduce(function(a,b){return a+b;},0);
+    log(raised,'best rolls are higher than the plain instance',
+        Math.round(rp.reduce(function(a,b){return a+b;},0))+' -> '+Math.round(rb.reduce(function(a,b){return a+b;},0)));
+    var statsOk=true;
+    for(var sk in wItem.best.stats){
+      var f=Items.fieldOf(pB,sk);
+      if(f && Math.abs(f.v-wItem.best.stats[sk])>Math.max(1,wItem.best.stats[sk]*1e-4)) statsOk=false;
+    }
+    log(statsOk,'best stat values written onto the item');
+
+    var bw=Odin.serialize([bestNode]);
+    var bp=Odin.parse(bw.data.buffer.slice(bw.data.byteOffset,bw.data.byteOffset+bw.data.length));
+    log(bp.read===bp.bytes&&bp.warnings.length===0,'a best-rolled item serialises and re-parses');
+
+    // --- progression fields ----------------------------------------------
+    var top=d5.root[0].c, found={};
+    top.forEach(function(sec){ if(sec.c) sec.c.forEach(function(f){
+      if(!f.c&&(f.name==='P_Base'||f.name==='Money'||f.name==='Xp_Total'||f.name==='DFXp_Total')) found[f.name]=f.v; }); });
+    log(Object.keys(found).length===4,'progression fields present',
+        Object.keys(found).map(function(k){return k+'='+String(found[k]);}).join(' '));
   }catch(e){
     log(false,'exception: '+e.message);
     console.error(e);

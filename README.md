@@ -20,6 +20,7 @@ Everything runs client-side. No upload, no server, no build step.
 | **Edit** | Click any value to change it. Numeric ranges are enforced per entry type (`Byte`, `Int16`, `UInt32`, `Int64`, …), 64-bit values are handled as `BigInt` so tick counts stay exact. Full undo/redo. |
 | **Restructure** | Add a field to any node, clone the last element of a list, duplicate, reorder or delete any subtree. Array lengths and reference ids are recalculated automatically. |
 | **Insert items** | A catalogue of 442 real Shadow Dungeon items — searchable, filterable by kind / slot / quality, with an icon per item and a hover tooltip showing its stats. One click drops a complete, game-valid item into the inventory or chest at the first free grid cell. |
+| **Bulk edits** | A *Cheats* tab: fill every stack in a container, hand yourself one of every item in the game, the same again at the best rolls that exist in the save, and raise talent points / experience / money. Each button is one undo step. |
 | **Download** | Re-encodes the tree and saves it under the original filename. |
 
 ### Correctness
@@ -30,7 +31,8 @@ That means an edited file differs from the original only where you edited it.
 
 The **Verify** button re-encodes the current tree and reports the delta before you download,
 and `tests.html` runs 23 assertions in the browser (round-trip, value edits, 64-bit
-precision, insertion, deletion, reference-id uniqueness, re-parse of edited output).
+precision, insertion, deletion, reference-id uniqueness, grid packing without overlaps,
+bulk insertion of the whole catalogue, best-roll application, and re-parse of edited output).
 
 ---
 
@@ -97,6 +99,22 @@ python tools/extract_catalog.py path/to/slot_1.sav
 
 442 items from game version 1.0.8: 309 pieces of equipment, 72 gems/runes, 61 consumables.
 The catalogue contains item definitions only — no player name, session or transaction ids.
+
+### What "best rolls" means
+
+Equipment in this game is rolled per drop, so the same item exists in many strengths.
+The catalogue therefore records, for every item id:
+
+* the **strongest instance** found in the source save (highest stats plus modifier total),
+* each of its modifier rolls raised to the **highest value that modifier ever reaches** in that save,
+* the **forge level** raised to the highest that equipment slot is ever seen at (42).
+
+Nothing is invented: every number written into a save is one the game itself produced,
+just recombined into the best version of that item. Consumables and gems have no rolls —
+for them "best" is simply a full stack.
+
+Bulk insertion packs items by their real grid footprint (`Size`, e.g. 2x4 for most weapons),
+so nothing ever lands on top of anything else, and `PageCount` grows if new pages are used.
 
 ### Real sprites
 

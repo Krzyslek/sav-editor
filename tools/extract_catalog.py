@@ -93,6 +93,58 @@ def findall(nodes, want, out=None):
     return out
 
 
+def vec(node, name):
+    """An IntVector2 child as (x, y)."""
+    for c in kids(node):
+        if nm(c) == name and 'c' in c:
+            f = flat(c)
+            return [f.get('x') or f.get('X') or 0, f.get('y') or f.get('Y') or 0]
+    return [1, 1]
+
+
+def affix_rows(node, group):
+    """[[Index, EL, number], ...] of one modifier array."""
+    for c in kids(node):
+        if nm(c) == group and 'c' in c:
+            for a in kids(c):
+                if a['m'] == 6:
+                    rows = []
+                    for el in kids(a):
+                        if 'c' in el:
+                            f = flat(el)
+                            rows.append([f.get('Index') or 0, f.get('EL') or 0,
+                                         round(f.get('number') or 0, 4)])
+                    return rows
+    return []
+
+
+STAT_KEYS = ('Damage', 'Health', 'Mana', 'Fire', 'Frozen', 'Thunder', 'Poison', 'Physics', 'Shadow')
+
+
+def score(node):
+    """How strong one weapon instance is - used to pick the best of a kind."""
+    f = flat(node)
+    total = sum(f.get(k) or 0 for k in STAT_KEYS)
+    total += sum(r[2] for r in affix_rows(node, 'Main'))
+    return total
+
+
+def element_template(root):
+    """A single WPDT_A modifier node, so the app can rebuild Main/DOT arrays."""
+    for n in findall(root, WEAPON):
+        for c in kids(n):
+            if nm(c) in ('Main', 'DOT') and 'c' in c:
+                for a in kids(c):
+                    if a['m'] == 6:
+                        for el in kids(a):
+                            if 'c' in el:
+                                t = to_tpl(el)
+                                t.pop('n', None)
+                                t['m'] = 2
+                                return t
+    return None
+
+
 def affixes(node):
     """Rolled Main/DOT modifier entries of a weapon."""
     res = []
@@ -110,6 +162,16 @@ def affixes(node):
 
 def build(root):
     cat = {}
+    best_node = {}
+    affix_max = {}
+    slot_mj_max = {}
+
+    def note_affixes(node):
+        for group in ('Main', 'DOT'):
+            for idx, el, num in affix_rows(node, group):
+                key = '%s:%s' % (group, idx)
+                if num > affix_max.get(key, 0):
+                    affix_max[key] = round(num, 4)
 
     def add(node, kind):
         f = flat(node)
@@ -119,6 +181,12 @@ def build(root):
         key = str(gid)
         if key in cat:
             cat[key]['count'] += 1
+            if kind == 'weapon':
+                cat[key]['statsMax'] = {k: max(cat[key]['statsMax'].get(k, 0), f.get(k) or 0)
+                                        for k in STAT_KEYS}
+                cat[key]['mjMax'] = max(cat[key]['mjMax'], f.get('MJ_Level') or 0)
+                if score(node) > score(best_node[key]):
+                    best_node[key] = node
             return
         e = {'gid': gid, 'name': f.get('ItemName') or ('#%s' % gid), 'kind': kind, 'count': 1,
              'quality': f.get('Quality'), 'level': f.get('Level'), 'price': f.get('Price'),
@@ -126,24 +194,49 @@ def build(root):
         if kind == 'weapon':
             e.update(slot=f.get('WeaponType'), slotLabel=SLOT_LABEL.get(f.get('WeaponType'), f.get('WeaponType')),
                      charType=f.get('CharType'), mj=f.get('MJ_Level'), setIndex=f.get('Set_Index'),
-                     stats={k: f[k] for k in ('Damage', 'Health', 'Mana', 'Fire', 'Frozen', 'Thunder',
-                                              'Poison', 'Physics', 'Shadow') if f.get(k)},
+                     stats={k: f[k] for k in STAT_KEYS if f.get(k)},
+                     statsMax={k: f.get(k) or 0 for k in STAT_KEYS},
+                     mjMax=f.get('MJ_Level') or 0,
                      affixes=affixes(node))
+            best_node[key] = node
         elif kind == 'gem':
             e.update(bstype=f.get('BStype'), bsQuality=f.get('BS_Quality'), stackMax=f.get('MstackSize'),
                      skname=f.get('SKname'), el=f.get('EL'), index=f.get('Index'), number=f.get('Number'))
         else:
             e.update(useType=f.get('UseType'), infoType=f.get('InfoType'), number=f.get('Number'),
                      cd=f.get('CDTime'), duration=f.get('Duration'), stackMax=f.get('MstackSize'))
+        e['size'] = vec(node, 'Size')
+        e['stackMax'] = f.get('MstackSize') or 1
         e['tpl'] = to_tpl(node)
         cat[key] = e
 
     for n in findall(root, WEAPON):
+        note_affixes(n)
+        f = flat(n)
+        slot = f.get('WeaponType')
+        slot_mj_max[slot] = max(slot_mj_max.get(slot, 0), f.get('MJ_Level') or 0)
         add(n, 'weapon')
     for n in findall(root, BAOSHI):
         add(n, 'gem')
     for n in findall(root, USEITEM):
         add(n, 'use')
+
+    # "Best" variant: the strongest instance of that item found in the save, with
+    # every roll raised to the highest value the game produced for that modifier.
+    for key, entry in cat.items():
+        if entry['kind'] != 'weapon':
+            continue
+        node = best_node[key]
+        # forge level: the highest this slot is ever seen at, not just this item
+        best = {'mj': max(entry.pop('mjMax', 0), slot_mj_max.get(entry.get('slot'), 0)),
+                'stats': {k: round(v, 4) for k, v in entry.pop('statsMax', {}).items() if v}}
+        for group, field in (('Main', 'main'), ('DOT', 'dot')):
+            rows = []
+            for idx, el, num in affix_rows(node, group):
+                rows.append([idx, el, max(num, affix_max.get('%s:%s' % (group, idx), 0))])
+            if rows:
+                best[field] = rows
+        entry['best'] = best
 
     # the ContainerItemSaveData shell an item is placed in (payload slots blanked)
     shell = to_tpl(findall(root, CONTAINER)[0])
@@ -152,7 +245,7 @@ def build(root):
             c.pop('c', None)
             c.pop('t', None)
             c['m'] = 45
-    return sorted(cat.values(), key=lambda e: (e['kind'], e['gid'])), shell
+    return sorted(cat.values(), key=lambda e: (e['kind'], e['gid'])), shell, element_template(root)
 
 
 def main():
@@ -160,7 +253,7 @@ def main():
         print(__doc__)
         raise SystemExit(2)
     root, types, _ = load(sys.argv[1])
-    items, shell = build(root)
+    items, shell, elem = build(root)
 
     version = ''
     for n in root[0].get('c', []):
@@ -176,7 +269,8 @@ def main():
              'charTypes': CHAR_NAMES, 'slotLabels': SLOT_LABEL, 'items': items}
 
     for name, payload in (('shadow-dungeon-items.json', index),
-                          ('shadow-dungeon-templates.json', {'wrapper': shell, 'templates': templates})):
+                          ('shadow-dungeon-templates.json',
+                           {'wrapper': shell, 'element': elem, 'templates': templates})):
         path = os.path.join(out_dir, name)
         with open(path, 'w', encoding='utf-8') as fh:
             json.dump(payload, fh, ensure_ascii=False, separators=(',', ':'))

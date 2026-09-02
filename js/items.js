@@ -154,8 +154,12 @@
         wrapper.c[i] = { m: O.M.NamedNull, name: c.name, nameF: 1, p: wrapper };
       }
     }
+    if (place.best) applyBest(payload, place.best, place.elementTpl);
     // stack size, when the item supports it
-    if (place.count && place.count > 1) setField(payload, 'Number', place.count);
+    if (place.maxStack) fillStack(payload);
+    else if (place.count && place.count > 1) {
+      setField(payload, 'Number', Math.min(place.count, stackMaxOf(payload)));
+    }
     // keep the item's own slot bookkeeping in sync with where we put it
     setVector(payload, 'SaveSlot', place.x, place.y);
     wrapper._added = true;
@@ -193,6 +197,80 @@
     return n;
   }
 
+  // ---- stacks and "best" rolls ---------------------------------------------
+  function fieldOf(node, name) {
+    if (!node || !node.c) return null;
+    for (var i = 0; i < node.c.length; i++)
+      if (node.c[i].name === name && !node.c[i].c) return node.c[i];
+    return null;
+  }
+
+  // How many of this item one slot may hold, as the game itself states it.
+  function stackMaxOf(payload) {
+    var f = fieldOf(payload, 'MstackSize');
+    return f && f.v > 0 ? f.v : 1;
+  }
+
+  // Fills a fresh item's stack to its own maximum. Equipment does not stack.
+  function fillStack(payload) {
+    var num = fieldOf(payload, 'Number'), max = stackMaxOf(payload);
+    if (!num || max <= 1) return 0;
+    num.v = max; num.dirty = true;
+    return max;
+  }
+
+  // Every stack that is below its maximum in a container, as {node, value}
+  // pairs so the caller can turn them into undoable edits.
+  function stackTargets(arrayNode) {
+    var out = [];
+    for (var i = 0; i < arrayNode.c.length; i++) {
+      var payload = payloadFor(arrayNode.c[i]);
+      if (!payload) continue;
+      var num = fieldOf(payload, 'Number'), max = stackMaxOf(payload);
+      // only ever raises: a stack the game already put above its own cap is left alone
+      if (num && max > 1 && num.v < max) out.push({ node: num, value: max });
+    }
+    return out;
+  }
+  function payloadFor(containerItem) {
+    for (var i = 0; i < containerItem.c.length; i++)
+      if (containerItem.c[i].c && containerItem.c[i].type) return containerItem.c[i];
+    return null;
+  }
+
+  // Upgrades a freshly built item to the catalogue's "best" variant: the
+  // strongest instance found in the source save, with every modifier roll
+  // raised to the highest value that save ever produced for it.
+  function applyBest(payload, best, elementTpl) {
+    if (!best) return false;
+    var changed = 0, k;
+    if (best.mj) { if (setField(payload, 'MJ_Level', best.mj)) changed++; }
+    if (best.stats) for (k in best.stats) if (setField(payload, k, best.stats[k])) changed++;
+    if (best.main && setAffixArray(payload, 'Main', best.main, elementTpl)) changed++;
+    if (best.dot && setAffixArray(payload, 'DOT', best.dot, elementTpl)) changed++;
+    return changed > 0;
+  }
+
+  function setAffixArray(payload, group, rows, elementTpl) {
+    if (!elementTpl) return false;
+    var holder = null, i;
+    for (i = 0; i < payload.c.length; i++)
+      if (payload.c[i].name === group && payload.c[i].c) holder = payload.c[i];
+    if (!holder) return false;
+    var arr = null;
+    for (i = 0; i < holder.c.length; i++) if (holder.c[i].m === O.M.StartOfArray) arr = holder.c[i];
+    if (!arr) return false;
+    arr.c = rows.map(function (r) {
+      var e = O.fromTemplate(elementTpl, arr);
+      setField(e, 'Index', r[0]);
+      setField(e, 'EL', r[1]);
+      setField(e, 'number', r[2]);
+      return e;
+    });
+    arr.len = BigInt(arr.c.length);
+    return true;
+  }
+
   // ---- filtering -----------------------------------------------------------
   function filterItems(items, f) {
     var out = [], qy = (f.query || '').trim().toLowerCase();
@@ -219,6 +297,8 @@
   global.Items = {
     Catalog: Catalog, QUALITY: QUALITY, q: q, iconSvg: iconSvg, describe: describe,
     buildContainerItem: buildContainerItem, buildBareItem: buildBareItem,
-    filterItems: filterItems, setField: setField, SLOT_FIELD: SLOT_FIELD, ITEM_TYPE: ITEM_TYPE
+    filterItems: filterItems, setField: setField, SLOT_FIELD: SLOT_FIELD, ITEM_TYPE: ITEM_TYPE,
+    fieldOf: fieldOf, stackMaxOf: stackMaxOf, fillStack: fillStack, stackTargets: stackTargets,
+    payloadFor: payloadFor, applyBest: applyBest
   };
 })(typeof window !== 'undefined' ? window : this);

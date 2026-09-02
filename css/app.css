@@ -184,3 +184,18 @@ textarea.in { min-height: 66px; resize: vertical; font-family: Consolas, monospa
   .side { width: auto; border-left: none; border-top: 1px solid var(--line); height: 46vh; }
   .file-zone .hint { display: none; }
 }
+
+/* ---------- cheats ---------- */
+.cheat { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 14px; }
+.cheat:first-of-type { border-top: none; margin-top: 4px; padding-top: 0; }
+.cheat h3 { margin: 0 0 9px; font-size: 13px; font-weight: 600; }
+.cheat .stack { display: grid; gap: 4px; color: var(--muted); font-size: 12px; margin-bottom: 9px; }
+.cheat-btns { display: grid; gap: 6px; margin: 10px 0 4px; }
+.cheat-btns .btn { text-align: left; }
+table.prog { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.prog th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 6px 3px 0; }
+table.prog td { padding: 2px 6px 2px 0; }
+table.prog td.cur { color: var(--num); font-family: Consolas, monospace; text-align: right; white-space: nowrap; }
+table.prog input[type=text] { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font-family: Consolas, monospace; }
+table.prog tr.off { opacity: .45; }
+.busy { pointer-events: none; opacity: .6; }

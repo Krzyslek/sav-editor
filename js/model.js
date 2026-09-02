@@ -174,6 +174,19 @@
       undo: function () { parent.c.splice(index, 1); syncLen(parent); }
     };
   }
+  // Appending many children at once, undone in one step.
+  function insertMany(parent, nodes) {
+    return {
+      label: 'insert ' + nodes.length + ' entries',
+      node: parent,
+      redo: function () {
+        for (var i = 0; i < nodes.length; i++) { nodes[i].p = parent; parent.c.push(nodes[i]); }
+        syncLen(parent);
+      },
+      undo: function () { parent.c.splice(parent.c.length - nodes.length, nodes.length); syncLen(parent); }
+    };
+  }
+
   function duplicateNode(node) {
     var copy = O.clone(node, node.p);
     return insertNode(node.p, copy, node.p.c.indexOf(node) + 1);
@@ -186,6 +199,16 @@
       undo: function () { if (to < 0 || to >= list.length) return; list.splice(to, 1); list.splice(from, 0, node); }
     };
   }
+  // Several edits applied and undone as one unit.
+  function batch(label, ops) {
+    return {
+      label: label,
+      node: null,
+      redo: function () { for (var i = 0; i < ops.length; i++) ops[i].redo(); },
+      undo: function () { for (var i = ops.length - 1; i >= 0; i--) ops[i].undo(); }
+    };
+  }
+
   function syncLen(parent) {
     if (parent && parent.m === O.M.StartOfArray) parent.len = BigInt(parent.c.length);
   }
@@ -241,36 +264,105 @@
     return f;
   }
 
-  // Reads Page/GridX/GridY of every element and proposes a free cell.
-  function gridInfo(arrayNode) {
-    var occ = {}, maxPage = 0, maxX = 0, maxY = 0;
-    for (var i = 0; i < arrayNode.c.length; i++) {
+  // The payload node (Weapon / Baoshi / UseItem) inside a container element.
+  function payloadOf(containerItem) {
+    for (var i = 0; i < containerItem.c.length; i++)
+      if (containerItem.c[i].c && containerItem.c[i].type) return containerItem.c[i];
+    return null;
+  }
+
+  // An item's footprint in grid cells, read from its IntVector2 Size.
+  function sizeOf(payload) {
+    if (!payload) return [1, 1];
+    for (var i = 0; i < payload.c.length; i++) {
+      var c = payload.c[i];
+      if (c.name === 'Size' && c.c) {
+        var x = 1, y = 1;
+        for (var j = 0; j < c.c.length; j++) {
+          var k = c.c[j].name;
+          if (k === 'x' || k === 'X') x = c.c[j].v || 1;
+          if (k === 'y' || k === 'Y') y = c.c[j].v || 1;
+        }
+        return [x, y];
+      }
+    }
+    return [1, 1];
+  }
+
+  // Size-aware grid packer: every cell an item covers is marked, so bulk
+  // insertion never drops two items on top of each other.
+  function Packer(arrayNode, opts) {
+    opts = opts || {};
+    this.pages = {};
+    this.maxPage = 0;
+    var maxX = 0, maxY = 0, i;
+    for (i = 0; i < arrayNode.c.length; i++) {
       var f = itemFields(arrayNode.c[i]);
       if (!f.Page) continue;
+      var sz = sizeOf(payloadOf(arrayNode.c[i]));
       var pg = f.Page.v, x = f.GridX ? f.GridX.v : 0, y = f.GridY ? f.GridY.v : 0;
-      occ[pg + ':' + x + ':' + y] = true;
-      if (pg > maxPage) maxPage = pg;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
+      this.mark(pg, x, y, sz[0], sz[1]);
+      if (pg > this.maxPage) this.maxPage = pg;
+      if (x + sz[0] - 1 > maxX) maxX = x + sz[0] - 1;
+      if (y + sz[1] - 1 > maxY) maxY = y + sz[1] - 1;
     }
-    return { occupied: occ, maxPage: maxPage, cols: maxX + 1, rows: maxY + 1 };
+    // Grid size is inferred from what the game itself has already filled in.
+    this.cols = opts.cols || Math.max(maxX + 1, 1);
+    this.rows = opts.rows || Math.max(maxY + 1, 1);
   }
+  Packer.prototype = {
+    key: function (pg, x, y) { return pg + ':' + x + ':' + y; },
+    mark: function (pg, x, y, w, h) {
+      for (var dx = 0; dx < w; dx++)
+        for (var dy = 0; dy < h; dy++) this.pages[this.key(pg, x + dx, y + dy)] = true;
+    },
+    fits: function (pg, x, y, w, h) {
+      if (x + w > this.cols || y + h > this.rows) return false;
+      for (var dx = 0; dx < w; dx++)
+        for (var dy = 0; dy < h; dy++) if (this.pages[this.key(pg, x + dx, y + dy)]) return false;
+      return true;
+    },
+    // First free rectangle able to hold w x h, scanning pages in order.
+    place: function (w, h, startPage) {
+      var pg = startPage === undefined ? 0 : startPage;
+      for (; pg <= this.maxPage + 64; pg++) {
+        for (var y = 0; y + h <= this.rows; y++) {
+          for (var x = 0; x + w <= this.cols; x++) {
+            if (this.fits(pg, x, y, w, h)) {
+              this.mark(pg, x, y, w, h);
+              if (pg > this.maxPage) this.maxPage = pg;
+              return { page: pg, x: x, y: y };
+            }
+          }
+        }
+      }
+      return null;
+    }
+  };
+
+  // Kept for the single-item path: first free cell for a 1x1 footprint.
+  function gridInfo(arrayNode) { return new Packer(arrayNode); }
   function freeCell(info, startPage) {
-    var cols = Math.max(info.cols, 1), rows = Math.max(info.rows, 1);
-    for (var pg = startPage === undefined ? 0 : startPage; pg <= info.maxPage + 1; pg++)
-      for (var y = 0; y < rows; y++)
-        for (var x = 0; x < cols; x++)
-          if (!info.occupied[pg + ':' + x + ':' + y]) return { page: pg, x: x, y: y };
-    return { page: info.maxPage + 1, x: 0, y: 0 };
+    return info.place(1, 1, startPage) || { page: info.maxPage + 1, x: 0, y: 0 };
+  }
+
+  // The PageCount field that belongs to the same save object as this list.
+  function pageCountOf(listNode) {
+    var owner = listNode && listNode.p;
+    if (!owner || !owner.c) return null;
+    for (var i = 0; i < owner.c.length; i++)
+      if (owner.c[i].name === 'PageCount' && !owner.c[i].c) return owner.c[i];
+    return null;
   }
 
   global.Model = {
     shortType: shortType, label: label, pathOf: pathOf, valueText: valueText, hex: hex,
     search: search, findByType: findByType, ancestors: ancestors,
-    Edits: Edits, setValue: setValue, setName: setName, removeNode: removeNode,
-    insertNode: insertNode, duplicateNode: duplicateNode, moveNode: moveNode, syncLen: syncLen,
+    Edits: Edits, setValue: setValue, setName: setName, removeNode: removeNode, batch: batch,
+    insertNode: insertNode, insertMany: insertMany, duplicateNode: duplicateNode, moveNode: moveNode, syncLen: syncLen,
     NEW_TYPES: NEW_TYPES, newNode: newNode,
     findItemContainers: findItemContainers, itemFields: itemFields,
-    gridInfo: gridInfo, freeCell: freeCell, CONTAINER_ITEM: CONTAINER_ITEM
+    gridInfo: gridInfo, freeCell: freeCell, CONTAINER_ITEM: CONTAINER_ITEM,
+    Packer: Packer, payloadOf: payloadOf, sizeOf: sizeOf, pageCountOf: pageCountOf
   };
 })(typeof window !== 'undefined' ? window : this);
