@@ -63,6 +63,9 @@ recombined into the best version of that item. Gems and consumables have no roll
 * Both container pickers default to the inventory rather than the first list found.
 * `Model.Edits` gained `batch()` and `insertMany()`, so a bulk edit is one entry on the
   undo stack instead of hundreds.
+* **Cache busting.** Scripts, styles and the catalogue JSON are requested with a `?v=` stamp.
+  GitHub Pages serves assets with `max-age=600`, so without this a returning visitor could load
+  the new page against ten-minute-old scripts and hit missing functions.
 
 ### Tests
 

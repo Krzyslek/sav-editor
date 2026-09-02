@@ -6,6 +6,10 @@
   'use strict';
   var O = global.Odin, Mo = global.Model;
 
+  // Bumped on release so browsers do not mix a new page with cached old data.
+  // Keep in step with the ?v= stamps on the script tags in index.html.
+  var VERSION = '1.1.0';
+
   var QUALITY = {
     1: { n: 'Common',    c: '#9aa4b2' }, 2: { n: 'Common',    c: '#9aa4b2' },
     3: { n: 'Uncommon',  c: '#57b25b' }, 4: { n: 'Uncommon',  c: '#57b25b' },
@@ -67,7 +71,7 @@
     load: function (base) {
       var self = this;
       if (this.loading) return this.loading;
-      this.loading = fetch(base + 'data/shadow-dungeon-items.json')
+      this.loading = fetch(base + 'data/shadow-dungeon-items.json?v=' + VERSION)
         .then(function (r) { if (!r.ok) throw new Error('catalogue not found (' + r.status + ')'); return r.json(); })
         .then(function (j) {
           self.index = j;
@@ -83,7 +87,7 @@
       var self = this;
       if (this.templates) return Promise.resolve(this.templates);
       if (this.tLoading) return this.tLoading;
-      this.tLoading = fetch(base + 'data/shadow-dungeon-templates.json')
+      this.tLoading = fetch(base + 'data/shadow-dungeon-templates.json?v=' + VERSION)
         .then(function (r) { if (!r.ok) throw new Error('templates not found'); return r.json(); })
         .then(function (j) { self.templates = j; return j; });
       return this.tLoading;

@@ -151,6 +151,10 @@ tools/extract_catalog.py   regenerates the catalogue from a save
 
 No dependencies, no bundler — the files are served as they are.
 
+Static hosts cache assets (GitHub Pages sends `max-age=600`), so the script tags in
+`index.html` and the catalogue fetches in `js/items.js` carry a `?v=` stamp. Bump it in both
+places when releasing, otherwise a returning visitor can load a new page against stale scripts.
+
 ### Running locally
 
 ```bash
